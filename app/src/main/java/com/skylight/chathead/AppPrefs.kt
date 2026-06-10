@@ -39,7 +39,9 @@ object AppPrefs {
         val label: String,
         val url: String,
         val enabled: Boolean = true,
-        val kind: String = KIND_OPEN
+        val kind: String = KIND_OPEN,
+        /** Optional emoji used as the icon; blank = default (app icon / bolt). */
+        val emoji: String = ""
     )
 
     fun getSelected(context: Context): Set<String> =
@@ -59,7 +61,8 @@ object AppPrefs {
                     o.getString("label"),
                     o.getString("url"),
                     o.optBoolean("enabled", true),
-                    o.optString("kind", KIND_OPEN)
+                    o.optString("kind", KIND_OPEN),
+                    o.optString("emoji", "")
                 )
             }
         }.getOrDefault(emptyList())
@@ -74,6 +77,7 @@ object AppPrefs {
                     .put("url", it.url)
                     .put("enabled", it.enabled)
                     .put("kind", it.kind)
+                    .put("emoji", it.emoji)
             )
         }
         prefs(context).edit().putString(KEY_SHORTCUTS, arr.toString()).apply()

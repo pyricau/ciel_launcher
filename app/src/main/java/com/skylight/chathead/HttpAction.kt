@@ -26,9 +26,9 @@ object HttpAction {
                 }
                 val code = conn.responseCode
                 conn.disconnect()
-                if (code in 200..299) "$label sent ($code)" else "$label: HTTP $code"
+                if (code == 200) "✅" else "❌ $code"
             } catch (t: Throwable) {
-                "$label failed: ${t.message ?: t.javaClass.simpleName}"
+                "❌ ${t.message ?: t.javaClass.simpleName}"
             }
             mainHandler.post {
                 Toast.makeText(appContext, message, Toast.LENGTH_SHORT).show()

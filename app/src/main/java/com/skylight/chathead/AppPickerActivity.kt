@@ -14,11 +14,13 @@ import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
@@ -101,10 +103,10 @@ class AppPickerActivity : Activity() {
         rows.clear()
         rows.add(Row(TYPE_ADD))
         shortcuts.forEach {
-            val icon = if (it.kind == AppPrefs.KIND_HTTP) {
-                getDrawable(R.drawable.ic_http_shortcut)!!
-            } else {
-                iconForUrl(it.url)
+            val icon = when {
+                it.emoji.isNotBlank() -> EmojiIcon.toDrawable(this, it.emoji)
+                it.kind == AppPrefs.KIND_HTTP -> getDrawable(R.drawable.ic_http_shortcut)!!
+                else -> iconForUrl(it.url)
             }
             rows.add(Row(TYPE_SHORTCUT, shortcut = it, shortcutIcon = icon))
         }
@@ -211,25 +213,50 @@ class AppPickerActivity : Activity() {
             addView(httpRadio)
             check(openRadio.id)
         }
+        // Emoji icon (optional): type one via the keyboard's emoji panel, or tap a preset.
+        val emojiInput = EditText(this).apply {
+            hint = "Icon: pick an emoji (optional)"
+            setSingleLine()
+            textSize = 18f
+        }
+        val presetRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("💡", "🔌", "🌡️", "🔔", "🚪", "📺", "🎵", "🌀", "✅", "🏠", "▶️", "📋").forEach { e ->
+            presetRow.addView(TextView(this).apply {
+                text = e
+                textSize = 24f
+                setPadding(pad / 2, pad / 2, pad / 2, pad / 2)
+                setOnClickListener {
+                    emojiInput.setText(e)
+                    emojiInput.setSelection(emojiInput.text.length)
+                }
+            })
+        }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad / 2, pad, 0)
             addView(labelInput)
             addView(urlInput)
             addView(kindGroup)
+            addView(emojiInput)
+            addView(HorizontalScrollView(this@AppPickerActivity).apply { addView(presetRow) })
         }
         AlertDialog.Builder(this)
             .setTitle("Add URL shortcut")
-            .setView(container)
+            .setView(ScrollView(this).apply { addView(container) })
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Add") { _, _ ->
                 val kind = if (httpRadio.isChecked) AppPrefs.KIND_HTTP else AppPrefs.KIND_OPEN
-                addShortcut(labelInput.text.toString().trim(), urlInput.text.toString().trim(), kind)
+                addShortcut(
+                    labelInput.text.toString().trim(),
+                    urlInput.text.toString().trim(),
+                    kind,
+                    emojiInput.text.toString().trim()
+                )
             }
             .show()
     }
 
-    private fun addShortcut(label: String, rawUrl: String, kind: String) {
+    private fun addShortcut(label: String, rawUrl: String, kind: String, emoji: String) {
         if (label.isEmpty() || rawUrl.isEmpty()) {
             Toast.makeText(this, "Enter both a label and a URL", Toast.LENGTH_SHORT).show()
             return
@@ -242,7 +269,7 @@ class AppPickerActivity : Activity() {
         } else {
             "https://$rawUrl"
         }
-        shortcuts.add(AppPrefs.LinkShortcut(label, url, kind = kind))
+        shortcuts.add(AppPrefs.LinkShortcut(label, url, kind = kind, emoji = emoji))
         AppPrefs.setShortcuts(this, shortcuts)
         rebuildRows()
     }
