@@ -1,0 +1,50 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="84dp"
+    android:height="84dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+
+    <!-- Lumpy toxic-green blob head -->
+    <path
+        android:fillColor="#8BFF1A"
+        android:pathData="M50,5 C71,4 79,18 83,30 C93,34 97,51 90,63 C97,75 84,91 67,90 C58,99 40,97 32,89 C15,91 5,76 11,63 C3,51 9,34 19,30 C23,15 33,6 50,5 Z" />
+
+    <!-- Rosy weird cheeks -->
+    <path
+        android:fillColor="#FF5DA2"
+        android:pathData="M27,65m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+    <path
+        android:fillColor="#FF5DA2"
+        android:pathData="M75,60m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0" />
+
+    <!-- Asymmetric googly eyes (whites) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M37,40m-16,0a16,16 0,1 1,32 0a16,16 0,1 1,-32 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M69,33m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+
+    <!-- Pupils, looking in different directions -->
+    <path
+        android:fillColor="#101010"
+        android:pathData="M43,45m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+    <path
+        android:fillColor="#101010"
+        android:pathData="M65,31m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+
+    <!-- Big open grin -->
+    <path
+        android:fillColor="#3A0A4A"
+        android:pathData="M29,63 Q50,90 73,61 Q63,82 50,82 Q39,82 29,63 Z" />
+
+    <!-- Single goofy tooth -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M41,63 h8 v7 h-8 Z" />
+
+    <!-- Tongue sticking out -->
+    <path
+        android:fillColor="#FF4FA3"
+        android:pathData="M45,75 Q50,88 60,72 Q55,69 50,69 Q47,69 45,75 Z" />
+</vector>

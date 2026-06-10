@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Chathead</string>
+    <string name="accessibility_desc">Lets the Chathead Back button send the Back action to the app in the foreground.</string>
+</resources>
