@@ -15,6 +15,12 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.APP_CALCULATOR" />
         </intent>
+        <!-- See which app handles a deep-link URL (e.g. Trello for trello.com). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
     </queries>
 
     <application

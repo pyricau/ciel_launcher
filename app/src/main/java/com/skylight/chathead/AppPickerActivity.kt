@@ -1,33 +1,54 @@
 package com.skylight.chathead
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Bundle
+import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 
 /**
- * Full-screen launcher-style list of every launchable app with a checkbox each.
- * Checked apps are saved (live) to [AppPrefs] and become the icons shown in the
- * chathead's radial menu. Enforces [AppPrefs.MAX_APPS].
+ * Full-screen list for choosing what shows in the chathead's radial menu:
+ * launchable apps (checkbox each) plus custom deep-link shortcuts (e.g. a Trello
+ * board URL) added via a dialog. Selections are saved live to [AppPrefs] and
+ * share the [AppPrefs.MAX_ITEMS] budget.
+ *
+ * (Listing an app's own dynamic shortcuts isn't possible here: Android only lets
+ * the default launcher read other apps' shortcuts, and that's the Skylight app,
+ * not us. Deep links achieve the same thing without that permission.)
  */
 class AppPickerActivity : Activity() {
 
     private class AppRow(val component: String, val label: String, val icon: Drawable)
 
+    /** One list entry: the add-action, a saved shortcut, or an installed app. */
+    private class Row(
+        val type: Int,
+        val app: AppRow? = null,
+        val shortcut: AppPrefs.LinkShortcut? = null,
+        val shortcutIcon: Drawable? = null
+    )
+
     private lateinit var apps: List<AppRow>
-    private val selected = linkedSetOf<String>()
+    private val selectedApps = linkedSetOf<String>()
+    private val shortcuts = mutableListOf<AppPrefs.LinkShortcut>()
+
+    private val rows = mutableListOf<Row>()
     private lateinit var titleView: TextView
-    private lateinit var adapter: AppsAdapter
+    private lateinit var adapter: RowsAdapter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,16 +57,19 @@ class AppPickerActivity : Activity() {
         titleView = findViewById(R.id.picker_title)
         findViewById<Button>(R.id.picker_done).setOnClickListener { finish() }
 
-        selected.addAll(AppPrefs.getSelected(this))
+        selectedApps.addAll(AppPrefs.getSelected(this))
+        shortcuts.addAll(AppPrefs.getShortcuts(this))
         apps = loadLaunchableApps()
 
-        adapter = AppsAdapter()
+        adapter = RowsAdapter()
         val list = findViewById<ListView>(R.id.app_list)
         list.adapter = adapter
-        list.setOnItemClickListener { _, _, position, _ -> toggle(apps[position]) }
+        list.setOnItemClickListener { _, _, position, _ -> onRowClick(rows[position]) }
 
-        updateTitle()
+        rebuildRows()
     }
+
+    private fun selectedCount() = selectedApps.size + shortcuts.size
 
     private fun loadLaunchableApps(): List<AppRow> {
         val pm = packageManager
@@ -54,51 +78,154 @@ class AppPickerActivity : Activity() {
             .filter { it.activityInfo.packageName != packageName }
             .map {
                 val component = ComponentName(it.activityInfo.packageName, it.activityInfo.name)
-                AppRow(
-                    component = component.flattenToString(),
-                    label = it.loadLabel(pm).toString(),
-                    icon = it.loadIcon(pm)
-                )
+                AppRow(component.flattenToString(), it.loadLabel(pm).toString(), it.loadIcon(pm))
             }
             .sortedBy { it.label.lowercase() }
     }
 
-    private fun toggle(app: AppRow) {
-        if (selected.contains(app.component)) {
-            selected.remove(app.component)
-        } else {
-            if (selected.size >= AppPrefs.MAX_APPS) {
-                Toast.makeText(
-                    this,
-                    "You can pick up to ${AppPrefs.MAX_APPS} apps",
-                    Toast.LENGTH_SHORT
-                ).show()
-                return
-            }
-            selected.add(app.component)
+    private fun rebuildRows() {
+        rows.clear()
+        rows.add(Row(TYPE_ADD))
+        shortcuts.forEach {
+            rows.add(Row(TYPE_SHORTCUT, shortcut = it, shortcutIcon = iconForUrl(it.url)))
         }
-        AppPrefs.setSelected(this, selected)
+        apps.forEach { rows.add(Row(TYPE_APP, app = it)) }
         adapter.notifyDataSetChanged()
-        updateTitle()
+        titleView.text = "Apps & shortcuts (${selectedCount()}/${AppPrefs.MAX_ITEMS})"
     }
 
-    private fun updateTitle() {
-        titleView.text = "Choose apps (${selected.size}/${AppPrefs.MAX_APPS})"
+    private fun onRowClick(row: Row) {
+        when (row.type) {
+            TYPE_ADD -> showAddDialog()
+            TYPE_SHORTCUT -> {
+                // For a custom shortcut, "remove" is the only toggle — unchecking deletes it.
+                shortcuts.remove(row.shortcut)
+                AppPrefs.setShortcuts(this, shortcuts)
+                rebuildRows()
+            }
+            TYPE_APP -> {
+                val component = row.app!!.component
+                if (selectedApps.contains(component)) {
+                    selectedApps.remove(component)
+                } else {
+                    if (selectedCount() >= AppPrefs.MAX_ITEMS) {
+                        tooMany(); return
+                    }
+                    selectedApps.add(component)
+                }
+                AppPrefs.setSelected(this, selectedApps)
+                rebuildRows()
+            }
+        }
     }
 
-    private inner class AppsAdapter : BaseAdapter() {
-        override fun getCount() = apps.size
-        override fun getItem(position: Int) = apps[position]
+    private fun tooMany() {
+        Toast.makeText(this, "You can pick up to ${AppPrefs.MAX_ITEMS} items", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showAddDialog() {
+        if (selectedCount() >= AppPrefs.MAX_ITEMS) {
+            tooMany(); return
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val labelInput = EditText(this).apply {
+            hint = "Label (e.g. Work board)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        val urlInput = EditText(this).apply {
+            hint = "https://trello.com/b/..."
+            inputType = InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(labelInput)
+            addView(urlInput)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Add board / link shortcut")
+            .setView(container)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Add") { _, _ ->
+                addShortcut(labelInput.text.toString().trim(), urlInput.text.toString().trim())
+            }
+            .show()
+    }
+
+    private fun addShortcut(label: String, rawUrl: String) {
+        if (label.isEmpty() || rawUrl.isEmpty()) {
+            Toast.makeText(this, "Enter both a label and a URL", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (selectedCount() >= AppPrefs.MAX_ITEMS) {
+            tooMany(); return
+        }
+        val url = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+            rawUrl
+        } else {
+            "https://$rawUrl"
+        }
+        shortcuts.add(AppPrefs.LinkShortcut(label, url))
+        AppPrefs.setShortcuts(this, shortcuts)
+        rebuildRows()
+    }
+
+    /**
+     * Icon of the *specific* app that handles the URL (e.g. Trello), else a link
+     * glyph. Picks the handler that isn't a general-purpose browser.
+     */
+    private fun iconForUrl(url: String): Drawable {
+        val fallback = getDrawable(R.drawable.ic_link)!!
+        return runCatching {
+            val pm = packageManager
+            val handlers = pm.queryIntentActivities(Intent(Intent.ACTION_VIEW, Uri.parse(url)), 0)
+            val browsers = pm.queryIntentActivities(
+                Intent(Intent.ACTION_VIEW, Uri.parse("http://example.com/")), 0
+            ).mapTo(HashSet()) { it.activityInfo.packageName }
+            handlers.firstOrNull {
+                val p = it.activityInfo.packageName
+                p != "android" && p !in browsers
+            }?.loadIcon(pm) ?: fallback
+        }.getOrDefault(fallback)
+    }
+
+    private inner class RowsAdapter : BaseAdapter() {
+        override fun getCount() = rows.size
+        override fun getItem(position: Int) = rows[position]
         override fun getItemId(position: Int) = position.toLong()
+        override fun getViewTypeCount() = 2
+        override fun getItemViewType(position: Int) =
+            if (rows[position].type == TYPE_ADD) 0 else 1
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val row = convertView ?: layoutInflater.inflate(R.layout.row_app, parent, false)
-            val app = apps[position]
-            row.findViewById<ImageView>(R.id.app_icon).setImageDrawable(app.icon)
-            row.findViewById<TextView>(R.id.app_label).text = app.label
-            row.findViewById<CheckBox>(R.id.app_check).isChecked =
-                selected.contains(app.component)
-            return row
+            val row = rows[position]
+            if (row.type == TYPE_ADD) {
+                return convertView ?: layoutInflater.inflate(R.layout.row_add, parent, false)
+            }
+            val view = convertView ?: layoutInflater.inflate(R.layout.row_app, parent, false)
+            val icon = view.findViewById<ImageView>(R.id.app_icon)
+            val label = view.findViewById<TextView>(R.id.app_label)
+            val subtitle = view.findViewById<TextView>(R.id.app_subtitle)
+            val check = view.findViewById<CheckBox>(R.id.app_check)
+            if (row.type == TYPE_SHORTCUT) {
+                icon.setImageDrawable(row.shortcutIcon)
+                label.text = row.shortcut!!.label
+                subtitle.text = row.shortcut.url
+                subtitle.visibility = View.VISIBLE
+                check.isChecked = true
+            } else {
+                icon.setImageDrawable(row.app!!.icon)
+                label.text = row.app.label
+                subtitle.visibility = View.GONE
+                check.isChecked = selectedApps.contains(row.app.component)
+            }
+            return view
         }
+    }
+
+    companion object {
+        private const val TYPE_ADD = 0
+        private const val TYPE_SHORTCUT = 1
+        private const val TYPE_APP = 2
     }
 }

@@ -11,6 +11,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -300,6 +301,7 @@ class OverlayService : Service() {
         )
 
         items.addAll(loadSelectedApps())
+        items.addAll(loadCustomShortcuts())
         return items
     }
 
@@ -374,6 +376,50 @@ class OverlayService : Service() {
                 )
             }.getOrNull()
         }
+    }
+
+    /**
+     * Loads the user's custom deep-link shortcuts (e.g. Trello board URLs). Each
+     * launches an ACTION_VIEW intent; verified app-links (like trello.com) open
+     * straight in the owning app.
+     */
+    private fun loadCustomShortcuts(): List<MenuItem> {
+        return AppPrefs.getShortcuts(this).map { shortcut ->
+            MenuItem(
+                icon = iconForUrl(shortcut.url),
+                backgroundColor = Color.WHITE,
+                action = {
+                    try {
+                        startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(shortcut.url))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    } catch (t: Throwable) {
+                        Toast.makeText(this, "Couldn't open ${shortcut.label}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
+        }
+    }
+
+    /**
+     * Icon of the *specific* app that handles the URL (e.g. Trello for a
+     * trello.com link), else a generic link glyph. We pick the handler that
+     * isn't a general-purpose browser (browsers also handle any http URL).
+     */
+    private fun iconForUrl(url: String): Drawable {
+        val fallback = getDrawable(R.drawable.ic_link)!!
+        return runCatching {
+            val pm = packageManager
+            val handlers = pm.queryIntentActivities(Intent(Intent.ACTION_VIEW, Uri.parse(url)), 0)
+            val browsers = pm.queryIntentActivities(
+                Intent(Intent.ACTION_VIEW, Uri.parse("http://example.com/")), 0
+            ).mapTo(HashSet()) { it.activityInfo.packageName }
+            handlers.firstOrNull {
+                val p = it.activityInfo.packageName
+                p != "android" && p !in browsers
+            }?.loadIcon(pm) ?: fallback
+        }.getOrDefault(fallback)
     }
 
     // endregion
