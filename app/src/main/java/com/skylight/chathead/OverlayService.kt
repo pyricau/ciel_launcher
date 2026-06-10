@@ -7,18 +7,19 @@ import android.app.Service
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.content.pm.ResolveInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
@@ -30,9 +31,9 @@ import kotlin.math.sin
 
 /**
  * Foreground service that draws a draggable "chathead" face on top of every
- * other app. Tapping the face opens a radial menu of 5 app launcher icons
- * floating around it; tapping an icon launches that app, and tapping the face
- * again (or anywhere outside the icons) hides the menu.
+ * other app. Tapping the face opens a radial menu (Back, Home, and the apps the
+ * user chose) floating around it; tapping an icon runs it, and tapping the face
+ * again or outside hides the menu. Long-pressing the face opens the app picker.
  */
 class OverlayService : Service() {
 
@@ -52,11 +53,31 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     override fun onCreate() {
         super.onCreate()
+        instance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         startAsForeground()
         addBubble()
+    }
+
+    /**
+     * Hides the chathead (and dismisses any open menu) while [hidden] is true —
+     * used while the Skylight photo screensaver is up or our own app-picker is
+     * in front. Shows it again otherwise. Called by [BackAccessibilityService].
+     */
+    fun setBubbleHidden(hidden: Boolean) {
+        mainHandler.post {
+            if (!this::bubbleView.isInitialized) return@post
+            if (hidden) {
+                closeMenu()
+                if (bubbleView.visibility != View.GONE) bubbleView.visibility = View.GONE
+            } else if (bubbleView.visibility != View.VISIBLE) {
+                bubbleView.visibility = View.VISIBLE
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -88,6 +109,16 @@ class OverlayService : Service() {
         var downRawX = 0f
         var downRawY = 0f
         var dragged = false
+        var longPressed = false
+
+        // Fires if the finger stays still long enough: open the app picker.
+        val longPressRunnable = Runnable {
+            if (!dragged) {
+                longPressed = true
+                closeMenu()
+                openAppPicker()
+            }
+        }
 
         bubbleView.setOnTouchListener { _, event ->
             when (event.action) {
@@ -97,6 +128,8 @@ class OverlayService : Service() {
                     downRawX = event.rawX
                     downRawY = event.rawY
                     dragged = false
+                    longPressed = false
+                    mainHandler.postDelayed(longPressRunnable, LONG_PRESS_TIMEOUT)
                     true
                 }
 
@@ -105,6 +138,7 @@ class OverlayService : Service() {
                     val dy = event.rawY - downRawY
                     if (abs(dx) > TOUCH_SLOP || abs(dy) > TOUCH_SLOP) {
                         dragged = true
+                        mainHandler.removeCallbacks(longPressRunnable)
                     }
                     bubbleParams.x = initialX + dx.toInt()
                     bubbleParams.y = initialY + dy.toInt()
@@ -112,8 +146,9 @@ class OverlayService : Service() {
                     true
                 }
 
-                MotionEvent.ACTION_UP -> {
-                    if (!dragged) toggleMenu()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    mainHandler.removeCallbacks(longPressRunnable)
+                    if (!dragged && !longPressed) toggleMenu()
                     true
                 }
 
@@ -122,6 +157,13 @@ class OverlayService : Service() {
         }
 
         windowManager.addView(bubbleView, bubbleParams)
+    }
+
+    private fun openAppPicker() {
+        startActivity(
+            Intent(this, AppPickerActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 
     // endregion
@@ -154,9 +196,26 @@ class OverlayService : Service() {
         val centerX = bubbleParams.x + bubbleSize / 2
         val centerY = bubbleParams.y + bubbleSize / 2
 
-        val radius = dp(130)
-        val iconSize = dp(64)
-        val pad = dp(10)
+        // Adapt icon size and ring radius to how many items there are. Icons get
+        // smaller as the count grows but never below the 48dp tap-target minimum;
+        // the radius grows just enough to keep them from overlapping.
+        val count = items.size
+        val iconSize = dp(
+            when {
+                count <= 4 -> 68
+                count <= 6 -> 60
+                count <= 8 -> 54
+                else -> 48
+            }
+        )
+        val pad = (iconSize * 0.16f).toInt()
+        val minSpacing = iconSize * 1.25
+        val neededRadius = if (count > 1) {
+            (minSpacing / (2 * sin(Math.PI / count))).toInt()
+        } else {
+            dp(120)
+        }
+        val radius = neededRadius.coerceIn(dp(120), dp(170))
 
         items.forEachIndexed { index, item ->
             // Spread the icons evenly in a circle, starting from the top.
@@ -216,8 +275,8 @@ class OverlayService : Service() {
 
     /**
      * Builds the radial menu: a Back action, a "go to Skylight calendar" action,
-     * then 5 launcher apps (always including the calculator). Back and Home are
-     * kept first so they sit at stable positions (top of the ring).
+     * then the user-chosen apps. Back and Home are kept first so they sit at
+     * stable positions (top of the ring).
      */
     private fun buildMenuItems(): List<MenuItem> {
         val items = mutableListOf<MenuItem>()
@@ -240,7 +299,7 @@ class OverlayService : Service() {
             )
         )
 
-        items.addAll(pickApps())
+        items.addAll(loadSelectedApps())
         return items
     }
 
@@ -286,58 +345,35 @@ class OverlayService : Service() {
     }
 
     /**
-     * Picks 5 launcher apps to show: always the device calculator, plus 4 random
-     * others. (Random selection is a placeholder until real targets are wired up.)
+     * Loads the apps the user chose in [AppPickerActivity]. Saved entries whose
+     * app is no longer installed are skipped.
      */
-    private fun pickApps(): List<MenuItem> {
+    private fun loadSelectedApps(): List<MenuItem> {
         val pm = packageManager
-        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val launchable = pm.queryIntentActivities(launcherIntent, 0)
-            .filter { it.activityInfo.packageName != packageName }
-
-        val chosen = mutableListOf<MenuItem>()
-        val usedPackages = mutableSetOf<String>()
-
-        // Anchor: the device calculator, resolved via the calculator app category.
-        val calcIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_CALCULATOR)
-        pm.resolveActivity(calcIntent, 0)?.let { calc ->
-            if (calc.activityInfo != null) {
-                chosen.add(toAppItem(pm, calc))
-                usedPackages.add(calc.activityInfo.packageName)
-            }
-        }
-
-        for (info in launchable.shuffled()) {
-            if (chosen.size >= APP_COUNT) break
-            if (info.activityInfo.packageName in usedPackages) continue
-            chosen.add(toAppItem(pm, info))
-            usedPackages.add(info.activityInfo.packageName)
-        }
-
-        // Randomize positions so the calculator isn't always at the same spot.
-        return chosen.shuffled()
-    }
-
-    private fun toAppItem(pm: PackageManager, info: ResolveInfo): MenuItem {
-        val activity = info.activityInfo
-        val launchIntent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-            component = ComponentName(activity.packageName, activity.name)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-        }
-        val label = info.loadLabel(pm).toString()
-        return MenuItem(
-            icon = info.loadIcon(pm),
-            backgroundColor = Color.WHITE,
-            action = {
-                try {
-                    startActivity(launchIntent)
-                } catch (t: Throwable) {
-                    Toast.makeText(this, "Couldn't open $label", Toast.LENGTH_SHORT).show()
+        return AppPrefs.getSelected(this).mapNotNull { flat ->
+            val component = ComponentName.unflattenFromString(flat) ?: return@mapNotNull null
+            runCatching {
+                val info = pm.getActivityInfo(component, 0)
+                val label = info.loadLabel(pm).toString()
+                val launchIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    this.component = component
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
                 }
-            }
-        )
+                MenuItem(
+                    icon = info.loadIcon(pm),
+                    backgroundColor = Color.WHITE,
+                    action = {
+                        try {
+                            startActivity(launchIntent)
+                        } catch (t: Throwable) {
+                            Toast.makeText(this, "Couldn't open $label", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }.getOrNull()
+        }
     }
 
     // endregion
@@ -366,6 +402,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (instance === this) instance = null
         closeMenu()
         if (this::bubbleView.isInitialized && bubbleView.isAttachedToWindow) {
             windowManager.removeView(bubbleView)
@@ -383,6 +420,11 @@ class OverlayService : Service() {
 
     companion object {
         private const val TOUCH_SLOP = 10f
-        private const val APP_COUNT = 5
+        private val LONG_PRESS_TIMEOUT = ViewConfiguration.getLongPressTimeout().toLong()
+
+        /** Set while the service is running so the accessibility service can reach it. */
+        @Volatile
+        var instance: OverlayService? = null
+            private set
     }
 }
