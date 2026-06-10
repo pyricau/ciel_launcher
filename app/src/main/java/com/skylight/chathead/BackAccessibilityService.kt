@@ -15,12 +15,11 @@ import android.view.accessibility.AccessibilityNodeInfo
  *    signature-level INJECT_EVENTS permission), but an enabled accessibility
  *    service can trigger it globally via [performGlobalAction].
  *
- * 2. Hide the chathead when it shouldn't be shown: while our own full-screen
- *    app-picker is in front, or while the Skylight in-app photo screensaver is
- *    up. The picker is detected from window-state-changed events (package +
- *    class); the screensaver runs inside the same CalendarActivity window as the
- *    calendar, so it's detected by looking for its distinctive view ids in the
- *    active window's node tree.
+ * 2. Hide the chathead while the Skylight in-app photo screensaver is up. The
+ *    screensaver runs inside the same CalendarActivity window as the calendar,
+ *    so it's detected by looking for its distinctive view ids in the active
+ *    window's node tree. (Hiding the bubble while our own picker is open is
+ *    handled directly by AppPickerActivity, not here.)
  *
  * The service must be enabled in system settings; on this debug device that is
  * done over adb.
@@ -30,14 +29,6 @@ class BackAccessibilityService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val recheck = Runnable { updateScreensaverState() }
 
-    /**
-     * Whether our own full-screen app-picker is the foreground activity. Tracked
-     * from window-state-changed events (not the node tree, which can be null mid-
-     * transition and would also pick up our own overlay/menu windows).
-     */
-    @Volatile
-    private var pickerForeground = false
-
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -45,13 +36,6 @@ class BackAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            // A new window/activity took focus. Our picker is the only full-screen
-            // activity we care about; our overlay/menu windows share our package
-            // name but have different class names, so match on the class.
-            pickerForeground = event.packageName == packageName &&
-                event.className == PICKER_CLASS
-        }
         // Window content can change rapidly (e.g. each photo slide); debounce so
         // we only inspect the tree a few times a second.
         handler.removeCallbacks(recheck)
@@ -72,18 +56,8 @@ class BackAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    /** Tells the overlay to hide while it shouldn't be shown, show otherwise. */
     private fun updateScreensaverState() {
-        OverlayService.instance?.setBubbleHidden(shouldHideBubble())
-    }
-
-    /**
-     * The chathead is hidden when our own app-picker is in front (so it doesn't
-     * cover the list) or when the Skylight photo screensaver is up.
-     */
-    private fun shouldHideBubble(): Boolean {
-        if (pickerForeground) return true
-        return isSkylightScreensaver()
+        OverlayService.instance?.setScreensaverHidden(isSkylightScreensaver())
     }
 
     private fun isSkylightScreensaver(): Boolean {
@@ -112,7 +86,6 @@ class BackAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val SKYLIGHT_PACKAGE = "com.skylight"
-        private const val PICKER_CLASS = "com.skylight.chathead.AppPickerActivity"
 
         /** View ids that only exist while the Skylight photo screensaver is up. */
         private val SCREENSAVER_VIEW_IDS = listOf(

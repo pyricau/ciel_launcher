@@ -69,7 +69,19 @@ class AppPickerActivity : Activity() {
         rebuildRows()
     }
 
-    private fun selectedCount() = selectedApps.size + shortcuts.size
+    // Hide the chathead while this picker is in front (and during its dialogs,
+    // since a dialog doesn't pause the activity). Shown again on pause.
+    override fun onResume() {
+        super.onResume()
+        OverlayService.instance?.setPickerHidden(true)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        OverlayService.instance?.setPickerHidden(false)
+    }
+
+    private fun selectedCount() = selectedApps.size + shortcuts.count { it.enabled }
 
     private fun loadLaunchableApps(): List<AppRow> {
         val pm = packageManager
@@ -98,7 +110,20 @@ class AppPickerActivity : Activity() {
         when (row.type) {
             TYPE_ADD -> showAddDialog()
             TYPE_SHORTCUT -> {
-                // Tapping the row body does nothing; removal is via the delete button.
+                // Row tap toggles whether the (kept) shortcut shows in the ring.
+                val shortcut = row.shortcut!!
+                val index = shortcuts.indexOf(shortcut)
+                if (index < 0) return
+                if (shortcut.enabled) {
+                    shortcuts[index] = shortcut.copy(enabled = false)
+                } else {
+                    if (selectedCount() >= AppPrefs.MAX_ITEMS) {
+                        tooMany(); return
+                    }
+                    shortcuts[index] = shortcut.copy(enabled = true)
+                }
+                AppPrefs.setShortcuts(this, shortcuts)
+                rebuildRows()
             }
             TYPE_APP -> {
                 val component = row.app!!.component
@@ -126,6 +151,26 @@ class AppPickerActivity : Activity() {
         rebuildRows()
     }
 
+    /** Launches an entry directly (the picker doubles as a launcher), then closes. */
+    private fun launchRow(row: Row) {
+        val intent = if (row.type == TYPE_APP) {
+            Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                component = ComponentName.unflattenFromString(row.app!!.component)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            }
+        } else {
+            Intent(Intent.ACTION_VIEW, Uri.parse(row.shortcut!!.url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(intent)
+            finish()
+        } catch (t: Throwable) {
+            Toast.makeText(this, "Couldn't open it", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun showAddDialog() {
         if (selectedCount() >= AppPrefs.MAX_ITEMS) {
             tooMany(); return
@@ -146,7 +191,7 @@ class AppPickerActivity : Activity() {
             addView(urlInput)
         }
         AlertDialog.Builder(this)
-            .setTitle("Add board / link shortcut")
+            .setTitle("Add URL shortcut")
             .setView(container)
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Add") { _, _ ->
@@ -211,12 +256,15 @@ class AppPickerActivity : Activity() {
             val subtitle = view.findViewById<TextView>(R.id.app_subtitle)
             val check = view.findViewById<CheckBox>(R.id.app_check)
             val delete = view.findViewById<ImageView>(R.id.app_delete)
+            val launch = view.findViewById<ImageView>(R.id.app_launch)
+            launch.setOnClickListener { launchRow(row) }
             if (row.type == TYPE_SHORTCUT) {
                 icon.setImageDrawable(row.shortcutIcon)
                 label.text = row.shortcut!!.label
                 subtitle.text = row.shortcut.url
                 subtitle.visibility = View.VISIBLE
-                check.visibility = View.GONE
+                check.visibility = View.VISIBLE
+                check.isChecked = row.shortcut.enabled
                 delete.visibility = View.VISIBLE
                 delete.setOnClickListener { removeShortcut(row.shortcut) }
             } else {

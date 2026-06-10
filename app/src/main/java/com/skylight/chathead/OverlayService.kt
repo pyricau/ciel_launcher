@@ -61,6 +61,10 @@ class OverlayService : Service() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // The bubble is hidden while either reason is active.
+    private var hiddenByScreensaver = false
+    private var hiddenByPicker = false
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -69,15 +73,22 @@ class OverlayService : Service() {
         addBubble()
     }
 
-    /**
-     * Hides the chathead (and dismisses any open menu) while [hidden] is true —
-     * used while the Skylight photo screensaver is up or our own app-picker is
-     * in front. Shows it again otherwise. Called by [BackAccessibilityService].
-     */
-    fun setBubbleHidden(hidden: Boolean) {
+    /** Hidden while the Skylight photo screensaver is up (set by [BackAccessibilityService]). */
+    fun setScreensaverHidden(hidden: Boolean) {
+        hiddenByScreensaver = hidden
+        applyBubbleVisibility()
+    }
+
+    /** Hidden while our app-picker is in front (set by [AppPickerActivity] on resume/pause). */
+    fun setPickerHidden(hidden: Boolean) {
+        hiddenByPicker = hidden
+        applyBubbleVisibility()
+    }
+
+    private fun applyBubbleVisibility() {
         mainHandler.post {
             if (!this::bubbleView.isInitialized) return@post
-            if (hidden) {
+            if (hiddenByScreensaver || hiddenByPicker) {
                 closeMenu()
                 if (bubbleView.visibility != View.GONE) bubbleView.visibility = View.GONE
             } else if (bubbleView.visibility != View.VISIBLE) {
@@ -443,7 +454,7 @@ class OverlayService : Service() {
      * straight in the owning app.
      */
     private fun loadCustomShortcuts(): List<MenuItem> {
-        return AppPrefs.getShortcuts(this).map { shortcut ->
+        return AppPrefs.getShortcuts(this).filter { it.enabled }.map { shortcut ->
             MenuItem(
                 icon = iconForUrl(shortcut.url),
                 label = shortcut.label,

@@ -24,8 +24,12 @@ object AppPrefs {
     private const val KEY_APPS = "selected_apps"
     private const val KEY_SHORTCUTS = "custom_shortcuts"
 
-    /** A user-defined deep-link shortcut, e.g. a Trello board URL. */
-    data class LinkShortcut(val label: String, val url: String)
+    /**
+     * A user-defined deep-link shortcut, e.g. a Trello board URL. [enabled]
+     * controls whether it currently shows in the ring; disabled shortcuts are
+     * kept in the list but hidden.
+     */
+    data class LinkShortcut(val label: String, val url: String, val enabled: Boolean = true)
 
     fun getSelected(context: Context): Set<String> =
         prefs(context).getStringSet(KEY_APPS, emptySet()).orEmpty()
@@ -40,14 +44,16 @@ object AppPrefs {
             val arr = JSONArray(raw)
             (0 until arr.length()).map {
                 val o = arr.getJSONObject(it)
-                LinkShortcut(o.getString("label"), o.getString("url"))
+                LinkShortcut(o.getString("label"), o.getString("url"), o.optBoolean("enabled", true))
             }
         }.getOrDefault(emptyList())
     }
 
     fun setShortcuts(context: Context, shortcuts: List<LinkShortcut>) {
         val arr = JSONArray()
-        shortcuts.forEach { arr.put(JSONObject().put("label", it.label).put("url", it.url)) }
+        shortcuts.forEach {
+            arr.put(JSONObject().put("label", it.label).put("url", it.url).put("enabled", it.enabled))
+        }
         prefs(context).edit().putString(KEY_SHORTCUTS, arr.toString()).apply()
     }
 
