@@ -98,10 +98,7 @@ class AppPickerActivity : Activity() {
         when (row.type) {
             TYPE_ADD -> showAddDialog()
             TYPE_SHORTCUT -> {
-                // For a custom shortcut, "remove" is the only toggle — unchecking deletes it.
-                shortcuts.remove(row.shortcut)
-                AppPrefs.setShortcuts(this, shortcuts)
-                rebuildRows()
+                // Tapping the row body does nothing; removal is via the delete button.
             }
             TYPE_APP -> {
                 val component = row.app!!.component
@@ -121,6 +118,12 @@ class AppPickerActivity : Activity() {
 
     private fun tooMany() {
         Toast.makeText(this, "You can pick up to ${AppPrefs.MAX_ITEMS} items", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun removeShortcut(shortcut: AppPrefs.LinkShortcut) {
+        shortcuts.remove(shortcut)
+        AppPrefs.setShortcuts(this, shortcuts)
+        rebuildRows()
     }
 
     private fun showAddDialog() {
@@ -207,17 +210,23 @@ class AppPickerActivity : Activity() {
             val label = view.findViewById<TextView>(R.id.app_label)
             val subtitle = view.findViewById<TextView>(R.id.app_subtitle)
             val check = view.findViewById<CheckBox>(R.id.app_check)
+            val delete = view.findViewById<ImageView>(R.id.app_delete)
             if (row.type == TYPE_SHORTCUT) {
                 icon.setImageDrawable(row.shortcutIcon)
                 label.text = row.shortcut!!.label
                 subtitle.text = row.shortcut.url
                 subtitle.visibility = View.VISIBLE
-                check.isChecked = true
+                check.visibility = View.GONE
+                delete.visibility = View.VISIBLE
+                delete.setOnClickListener { removeShortcut(row.shortcut) }
             } else {
                 icon.setImageDrawable(row.app!!.icon)
                 label.text = row.app.label
                 subtitle.visibility = View.GONE
+                check.visibility = View.VISIBLE
                 check.isChecked = selectedApps.contains(row.app.component)
+                delete.visibility = View.GONE
+                delete.setOnClickListener(null)
             }
             return view
         }

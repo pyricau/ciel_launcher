@@ -8,6 +8,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -17,14 +18,18 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.cos
@@ -199,57 +204,105 @@ class OverlayService : Service() {
 
         // Adapt icon size and ring radius to how many items there are. Icons get
         // smaller as the count grows but never below the 48dp tap-target minimum;
-        // the radius grows just enough to keep them from overlapping.
+        // the radius grows to fit each icon + its label without overlapping.
         val count = items.size
         val iconSize = dp(
             when {
-                count <= 4 -> 68
-                count <= 6 -> 60
-                count <= 8 -> 54
+                count <= 4 -> 64
+                count <= 6 -> 58
+                count <= 8 -> 52
                 else -> 48
             }
         )
         val pad = (iconSize * 0.16f).toInt()
-        val minSpacing = iconSize * 1.25
+        val itemWidth = iconSize.coerceAtLeast(dp(84))
+        val minSpacing = itemWidth * 1.05
         val neededRadius = if (count > 1) {
             (minSpacing / (2 * sin(Math.PI / count))).toInt()
         } else {
-            dp(120)
+            dp(130)
         }
-        val radius = neededRadius.coerceIn(dp(120), dp(170))
+        val radius = neededRadius.coerceIn(dp(130), dp(220))
+
+        // Masks an item's icon to a circle and gives it a round drop shadow.
+        val circleOutline = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
 
         items.forEachIndexed { index, item ->
-            // Spread the icons evenly in a circle, starting from the top.
+            // Spread the items evenly in a circle, starting from the top.
             val angle = -Math.PI / 2 + 2 * Math.PI * index / items.size
-            val targetX = (centerX + radius * cos(angle)).toInt() - iconSize / 2
-            val targetY = (centerY + radius * sin(angle)).toInt() - iconSize / 2
+            val cxTarget = (centerX + radius * cos(angle)).toInt()
+            val cyTarget = (centerY + radius * sin(angle)).toInt()
 
-            val icon = ImageView(this).apply {
+            val iconView = ImageView(this).apply {
                 setImageDrawable(item.icon)
-                setPadding(pad, pad, pad, pad)
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(item.backgroundColor)
-                    setStroke(dp(2), Color.parseColor("#33000000"))
+                outlineProvider = circleOutline
+                clipToOutline = true
+                elevation = dp(4).toFloat()
+                if (item.isAction) {
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setPadding(pad, pad, pad, pad)
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(item.circleColor)
+                    }
+                } else {
+                    // App / shortcut icon: fill the circle, no background plate.
+                    scaleType = ImageView.ScaleType.FIT_XY
                 }
-                elevation = dp(6).toFloat()
+            }
+
+            val labelView = TextView(this).apply {
+                text = item.label
+                setTextColor(Color.WHITE)
+                textSize = 11f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                gravity = Gravity.CENTER
+                maxWidth = itemWidth
+                setPadding(dp(6), dp(1), dp(6), dp(2))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(9).toFloat()
+                    setColor(Color.parseColor("#CC000000"))
+                }
+            }
+
+            val itemView = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                addView(iconView, LinearLayout.LayoutParams(iconSize, iconSize))
+                addView(
+                    labelView,
+                    LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { topMargin = dp(3) }
+                )
                 setOnClickListener {
                     item.action()
                     closeMenu()
                 }
             }
 
-            val lp = FrameLayout.LayoutParams(iconSize, iconSize).apply {
-                leftMargin = targetX.coerceIn(0, metrics.widthPixels - iconSize)
-                topMargin = targetY.coerceIn(0, metrics.heightPixels - iconSize)
+            val lp = FrameLayout.LayoutParams(
+                itemWidth,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                leftMargin = (cxTarget - itemWidth / 2)
+                    .coerceIn(0, metrics.widthPixels - itemWidth)
+                topMargin = (cyTarget - iconSize / 2)
+                    .coerceIn(0, metrics.heightPixels - iconSize - dp(30))
             }
-            container.addView(icon, lp)
+            container.addView(itemView, lp)
 
-            // Little pop-in animation so the icons feel like they fly out.
-            icon.alpha = 0f
-            icon.scaleX = 0.3f
-            icon.scaleY = 0.3f
-            icon.animate()
+            // Little pop-in animation so the items feel like they fly out.
+            itemView.alpha = 0f
+            itemView.scaleX = 0.3f
+            itemView.scaleY = 0.3f
+            itemView.animate()
                 .alpha(1f)
                 .scaleX(1f)
                 .scaleY(1f)
@@ -286,7 +339,9 @@ class OverlayService : Service() {
         items.add(
             MenuItem(
                 icon = getDrawable(R.drawable.ic_back)!!,
-                backgroundColor = Color.parseColor("#FF7043"),
+                label = "Back",
+                isAction = true,
+                circleColor = Color.parseColor("#FF7043"),
                 action = { performBack() }
             )
         )
@@ -295,7 +350,9 @@ class OverlayService : Service() {
         items.add(
             MenuItem(
                 icon = getDrawable(R.drawable.ic_home)!!,
-                backgroundColor = Color.parseColor("#2D7FF9"),
+                label = "Home",
+                isAction = true,
+                circleColor = Color.parseColor("#2D7FF9"),
                 action = { goToSkylight() }
             )
         )
@@ -365,7 +422,9 @@ class OverlayService : Service() {
                 }
                 MenuItem(
                     icon = info.loadIcon(pm),
-                    backgroundColor = Color.WHITE,
+                    label = label,
+                    isAction = false,
+                    circleColor = Color.WHITE,
                     action = {
                         try {
                             startActivity(launchIntent)
@@ -387,7 +446,9 @@ class OverlayService : Service() {
         return AppPrefs.getShortcuts(this).map { shortcut ->
             MenuItem(
                 icon = iconForUrl(shortcut.url),
-                backgroundColor = Color.WHITE,
+                label = shortcut.label,
+                isAction = false,
+                circleColor = Color.WHITE,
                 action = {
                     try {
                         startActivity(
@@ -457,10 +518,16 @@ class OverlayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    /** One entry in the radial menu: an icon, its circle color, and what it does. */
+    /**
+     * One entry in the radial menu. Actions (Back/Home) draw a coloured circle
+     * behind a white glyph; apps/shortcuts show their icon masked to a circle
+     * with no background plate. Every item shows a [label] underneath.
+     */
     private class MenuItem(
         val icon: Drawable,
-        val backgroundColor: Int,
+        val label: String,
+        val isAction: Boolean,
+        val circleColor: Int,
         val action: () -> Unit
     )
 
