@@ -455,22 +455,32 @@ class OverlayService : Service() {
      */
     private fun loadCustomShortcuts(): List<MenuItem> {
         return AppPrefs.getShortcuts(this).filter { it.enabled }.map { shortcut ->
-            MenuItem(
-                icon = iconForUrl(shortcut.url),
-                label = shortcut.label,
-                isAction = false,
-                circleColor = Color.WHITE,
-                action = {
-                    try {
-                        startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(shortcut.url))
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    } catch (t: Throwable) {
-                        Toast.makeText(this, "Couldn't open ${shortcut.label}", Toast.LENGTH_SHORT).show()
+            if (shortcut.kind == AppPrefs.KIND_HTTP) {
+                MenuItem(
+                    icon = getDrawable(R.drawable.ic_http_shortcut)!!,
+                    label = shortcut.label,
+                    isAction = false,
+                    circleColor = Color.WHITE,
+                    action = { HttpAction.fire(this, shortcut.url, shortcut.label) }
+                )
+            } else {
+                MenuItem(
+                    icon = iconForUrl(shortcut.url),
+                    label = shortcut.label,
+                    isAction = false,
+                    circleColor = Color.WHITE,
+                    action = {
+                        try {
+                            startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(shortcut.url))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        } catch (t: Throwable) {
+                            Toast.makeText(this, "Couldn't open ${shortcut.label}", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     }
 

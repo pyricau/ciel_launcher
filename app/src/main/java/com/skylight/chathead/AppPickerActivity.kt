@@ -17,6 +17,8 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 
@@ -99,7 +101,12 @@ class AppPickerActivity : Activity() {
         rows.clear()
         rows.add(Row(TYPE_ADD))
         shortcuts.forEach {
-            rows.add(Row(TYPE_SHORTCUT, shortcut = it, shortcutIcon = iconForUrl(it.url)))
+            val icon = if (it.kind == AppPrefs.KIND_HTTP) {
+                getDrawable(R.drawable.ic_http_shortcut)!!
+            } else {
+                iconForUrl(it.url)
+            }
+            rows.add(Row(TYPE_SHORTCUT, shortcut = it, shortcutIcon = icon))
         }
         apps.forEach { rows.add(Row(TYPE_APP, app = it)) }
         adapter.notifyDataSetChanged()
@@ -151,8 +158,14 @@ class AppPickerActivity : Activity() {
         rebuildRows()
     }
 
-    /** Launches an entry directly (the picker doubles as a launcher), then closes. */
+    /** Activates an entry directly (the picker doubles as a launcher). */
     private fun launchRow(row: Row) {
+        val shortcut = row.shortcut
+        if (shortcut != null && shortcut.kind == AppPrefs.KIND_HTTP) {
+            // Fire the request and stay in the picker (handy for testing it).
+            HttpAction.fire(this, shortcut.url, shortcut.label)
+            return
+        }
         val intent = if (row.type == TYPE_APP) {
             Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
@@ -181,26 +194,42 @@ class AppPickerActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         }
         val urlInput = EditText(this).apply {
-            hint = "https://trello.com/b/..."
+            hint = "https://…  or  http://192.168.0.x/…"
             inputType = InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val openRadio = RadioButton(this).apply {
+            id = View.generateViewId()
+            text = "Open in app"
+        }
+        val httpRadio = RadioButton(this).apply {
+            id = View.generateViewId()
+            text = "HTTP request"
+        }
+        val kindGroup = RadioGroup(this).apply {
+            orientation = RadioGroup.HORIZONTAL
+            addView(openRadio)
+            addView(httpRadio)
+            check(openRadio.id)
         }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad / 2, pad, 0)
             addView(labelInput)
             addView(urlInput)
+            addView(kindGroup)
         }
         AlertDialog.Builder(this)
             .setTitle("Add URL shortcut")
             .setView(container)
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Add") { _, _ ->
-                addShortcut(labelInput.text.toString().trim(), urlInput.text.toString().trim())
+                val kind = if (httpRadio.isChecked) AppPrefs.KIND_HTTP else AppPrefs.KIND_OPEN
+                addShortcut(labelInput.text.toString().trim(), urlInput.text.toString().trim(), kind)
             }
             .show()
     }
 
-    private fun addShortcut(label: String, rawUrl: String) {
+    private fun addShortcut(label: String, rawUrl: String, kind: String) {
         if (label.isEmpty() || rawUrl.isEmpty()) {
             Toast.makeText(this, "Enter both a label and a URL", Toast.LENGTH_SHORT).show()
             return
@@ -213,7 +242,7 @@ class AppPickerActivity : Activity() {
         } else {
             "https://$rawUrl"
         }
-        shortcuts.add(AppPrefs.LinkShortcut(label, url))
+        shortcuts.add(AppPrefs.LinkShortcut(label, url, kind = kind))
         AppPrefs.setShortcuts(this, shortcuts)
         rebuildRows()
     }

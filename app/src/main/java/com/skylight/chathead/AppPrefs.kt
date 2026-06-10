@@ -20,16 +20,27 @@ object AppPrefs {
 
     const val MAX_ITEMS = 8
 
+    /** Opens [LinkShortcut.url] in its app (ACTION_VIEW). */
+    const val KIND_OPEN = "open"
+
+    /** Fires an HTTP POST to [LinkShortcut.url] (e.g. a Home Assistant webhook). */
+    const val KIND_HTTP = "http"
+
     private const val PREFS = "chathead_prefs"
     private const val KEY_APPS = "selected_apps"
     private const val KEY_SHORTCUTS = "custom_shortcuts"
 
     /**
-     * A user-defined deep-link shortcut, e.g. a Trello board URL. [enabled]
-     * controls whether it currently shows in the ring; disabled shortcuts are
-     * kept in the list but hidden.
+     * A user-defined shortcut. [kind] is [KIND_OPEN] (open the URL in an app) or
+     * [KIND_HTTP] (fire an HTTP request to the URL). [enabled] controls whether it
+     * currently shows in the ring; disabled shortcuts are kept but hidden.
      */
-    data class LinkShortcut(val label: String, val url: String, val enabled: Boolean = true)
+    data class LinkShortcut(
+        val label: String,
+        val url: String,
+        val enabled: Boolean = true,
+        val kind: String = KIND_OPEN
+    )
 
     fun getSelected(context: Context): Set<String> =
         prefs(context).getStringSet(KEY_APPS, emptySet()).orEmpty()
@@ -44,7 +55,12 @@ object AppPrefs {
             val arr = JSONArray(raw)
             (0 until arr.length()).map {
                 val o = arr.getJSONObject(it)
-                LinkShortcut(o.getString("label"), o.getString("url"), o.optBoolean("enabled", true))
+                LinkShortcut(
+                    o.getString("label"),
+                    o.getString("url"),
+                    o.optBoolean("enabled", true),
+                    o.optString("kind", KIND_OPEN)
+                )
             }
         }.getOrDefault(emptyList())
     }
@@ -52,7 +68,13 @@ object AppPrefs {
     fun setShortcuts(context: Context, shortcuts: List<LinkShortcut>) {
         val arr = JSONArray()
         shortcuts.forEach {
-            arr.put(JSONObject().put("label", it.label).put("url", it.url).put("enabled", it.enabled))
+            arr.put(
+                JSONObject()
+                    .put("label", it.label)
+                    .put("url", it.url)
+                    .put("enabled", it.enabled)
+                    .put("kind", it.kind)
+            )
         }
         prefs(context).edit().putString(KEY_SHORTCUTS, arr.toString()).apply()
     }
