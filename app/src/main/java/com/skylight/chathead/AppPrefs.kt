@@ -41,7 +41,9 @@ object AppPrefs {
         val enabled: Boolean = true,
         val kind: String = KIND_OPEN,
         /** Optional emoji used as the icon; blank = default (app icon / bolt). */
-        val emoji: String = ""
+        val emoji: String = "",
+        /** When true, running the shortcut asks for confirmation first. */
+        val confirm: Boolean = false
     )
 
     fun getSelected(context: Context): Set<String> =
@@ -62,7 +64,8 @@ object AppPrefs {
                     o.getString("url"),
                     o.optBoolean("enabled", true),
                     o.optString("kind", KIND_OPEN),
-                    o.optString("emoji", "")
+                    o.optString("emoji", ""),
+                    o.optBoolean("confirm", false)
                 )
             }
         }.getOrDefault(emptyList())
@@ -78,6 +81,7 @@ object AppPrefs {
                     .put("enabled", it.enabled)
                     .put("kind", it.kind)
                     .put("emoji", it.emoji)
+                    .put("confirm", it.confirm)
             )
         }
         prefs(context).edit().putString(KEY_SHORTCUTS, arr.toString()).apply()

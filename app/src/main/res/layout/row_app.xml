@@ -56,6 +56,19 @@
         android:contentDescription="Launch" />
 
     <ImageView
+        android:id="@+id/app_edit"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginEnd="4dp"
+        android:padding="10dp"
+        android:src="@drawable/ic_edit"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="false"
+        android:visibility="gone"
+        android:contentDescription="Edit shortcut" />
+
+    <ImageView
         android:id="@+id/app_delete"
         android:layout_width="44dp"
         android:layout_height="44dp"

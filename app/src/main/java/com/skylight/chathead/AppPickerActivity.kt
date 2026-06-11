@@ -43,7 +43,8 @@ class AppPickerActivity : Activity() {
         val type: Int,
         val app: AppRow? = null,
         val shortcut: AppPrefs.LinkShortcut? = null,
-        val shortcutIcon: Drawable? = null
+        val shortcutIcon: Drawable? = null,
+        val shortcutIndex: Int = -1
     )
 
     private lateinit var apps: List<AppRow>
@@ -102,13 +103,13 @@ class AppPickerActivity : Activity() {
     private fun rebuildRows() {
         rows.clear()
         rows.add(Row(TYPE_ADD))
-        shortcuts.forEach {
+        shortcuts.forEachIndexed { index, sc ->
             val icon = when {
-                it.emoji.isNotBlank() -> EmojiIcon.toDrawable(this, it.emoji)
-                it.kind == AppPrefs.KIND_HTTP -> getDrawable(R.drawable.ic_http_shortcut)!!
-                else -> iconForUrl(it.url)
+                sc.emoji.isNotBlank() -> EmojiIcon.toDrawable(this, sc.emoji)
+                sc.kind == AppPrefs.KIND_HTTP -> getDrawable(R.drawable.ic_http_shortcut)!!
+                else -> iconForUrl(sc.url)
             }
-            rows.add(Row(TYPE_SHORTCUT, shortcut = it, shortcutIcon = icon))
+            rows.add(Row(TYPE_SHORTCUT, shortcut = sc, shortcutIcon = icon, shortcutIndex = index))
         }
         apps.forEach { rows.add(Row(TYPE_APP, app = it)) }
         adapter.notifyDataSetChanged()
@@ -117,12 +118,12 @@ class AppPickerActivity : Activity() {
 
     private fun onRowClick(row: Row) {
         when (row.type) {
-            TYPE_ADD -> showAddDialog()
+            TYPE_ADD -> showShortcutDialog()
             TYPE_SHORTCUT -> {
                 // Row tap toggles whether the (kept) shortcut shows in the ring.
-                val shortcut = row.shortcut!!
-                val index = shortcuts.indexOf(shortcut)
-                if (index < 0) return
+                val index = row.shortcutIndex
+                if (index < 0 || index >= shortcuts.size) return
+                val shortcut = shortcuts[index]
                 if (shortcut.enabled) {
                     shortcuts[index] = shortcut.copy(enabled = false)
                 } else {
@@ -154,14 +155,28 @@ class AppPickerActivity : Activity() {
         Toast.makeText(this, "You can pick up to ${AppPrefs.MAX_ITEMS} items", Toast.LENGTH_SHORT).show()
     }
 
-    private fun removeShortcut(shortcut: AppPrefs.LinkShortcut) {
-        shortcuts.remove(shortcut)
+    private fun removeShortcutAt(index: Int) {
+        if (index < 0 || index >= shortcuts.size) return
+        shortcuts.removeAt(index)
         AppPrefs.setShortcuts(this, shortcuts)
         rebuildRows()
     }
 
     /** Activates an entry directly (the picker doubles as a launcher). */
     private fun launchRow(row: Row) {
+        val shortcut = row.shortcut
+        if (shortcut != null && shortcut.confirm) {
+            AlertDialog.Builder(this)
+                .setMessage("Run \"${shortcut.label}\", are you sure?")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Run") { _, _ -> doLaunch(row) }
+                .show()
+            return
+        }
+        doLaunch(row)
+    }
+
+    private fun doLaunch(row: Row) {
         val shortcut = row.shortcut
         if (shortcut != null && shortcut.kind == AppPrefs.KIND_HTTP) {
             // Fire the request and stay in the picker (handy for testing it).
@@ -186,18 +201,21 @@ class AppPickerActivity : Activity() {
         }
     }
 
-    private fun showAddDialog() {
-        if (selectedCount() >= AppPrefs.MAX_ITEMS) {
+    /** Add a new shortcut ([editing] null) or edit the one at [editIndex]. */
+    private fun showShortcutDialog(editing: AppPrefs.LinkShortcut? = null, editIndex: Int = -1) {
+        if (editing == null && selectedCount() >= AppPrefs.MAX_ITEMS) {
             tooMany(); return
         }
         val pad = (16 * resources.displayMetrics.density).toInt()
         val labelInput = EditText(this).apply {
             hint = "Label (e.g. Work board)"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setText(editing?.label ?: "")
         }
         val urlInput = EditText(this).apply {
             hint = "https://…  or  http://192.168.0.x/…"
             inputType = InputType.TYPE_TEXT_VARIATION_URI
+            setText(editing?.url ?: "")
         }
         val openRadio = RadioButton(this).apply {
             id = View.generateViewId()
@@ -211,13 +229,14 @@ class AppPickerActivity : Activity() {
             orientation = RadioGroup.HORIZONTAL
             addView(openRadio)
             addView(httpRadio)
-            check(openRadio.id)
+            check(if (editing?.kind == AppPrefs.KIND_HTTP) httpRadio.id else openRadio.id)
         }
         // Emoji icon (optional): type one via the keyboard's emoji panel, or tap a preset.
         val emojiInput = EditText(this).apply {
             hint = "Icon: pick an emoji (optional)"
             setSingleLine()
             textSize = 18f
+            setText(editing?.emoji ?: "")
         }
         val presetRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("💡", "🔌", "🌡️", "🔔", "🚪", "📺", "🎵", "🌀", "✅", "🏠", "▶️", "📋").forEach { e ->
@@ -231,6 +250,10 @@ class AppPickerActivity : Activity() {
                 }
             })
         }
+        val confirmCheck = CheckBox(this).apply {
+            text = "Ask for confirmation before running"
+            isChecked = editing?.confirm ?: false
+        }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad / 2, pad, 0)
@@ -239,37 +262,55 @@ class AppPickerActivity : Activity() {
             addView(kindGroup)
             addView(emojiInput)
             addView(HorizontalScrollView(this@AppPickerActivity).apply { addView(presetRow) })
+            addView(confirmCheck)
         }
         AlertDialog.Builder(this)
-            .setTitle("Add URL shortcut")
+            .setTitle(if (editing != null) "Edit shortcut" else "Add URL shortcut")
             .setView(ScrollView(this).apply { addView(container) })
             .setNegativeButton("Cancel", null)
-            .setPositiveButton("Add") { _, _ ->
+            .setPositiveButton(if (editing != null) "Save" else "Add") { _, _ ->
                 val kind = if (httpRadio.isChecked) AppPrefs.KIND_HTTP else AppPrefs.KIND_OPEN
-                addShortcut(
+                saveShortcut(
+                    editIndex,
+                    editing,
                     labelInput.text.toString().trim(),
                     urlInput.text.toString().trim(),
                     kind,
-                    emojiInput.text.toString().trim()
+                    emojiInput.text.toString().trim(),
+                    confirmCheck.isChecked
                 )
             }
             .show()
     }
 
-    private fun addShortcut(label: String, rawUrl: String, kind: String, emoji: String) {
+    private fun saveShortcut(
+        editIndex: Int,
+        editing: AppPrefs.LinkShortcut?,
+        label: String,
+        rawUrl: String,
+        kind: String,
+        emoji: String,
+        confirm: Boolean
+    ) {
         if (label.isEmpty() || rawUrl.isEmpty()) {
             Toast.makeText(this, "Enter both a label and a URL", Toast.LENGTH_SHORT).show()
             return
-        }
-        if (selectedCount() >= AppPrefs.MAX_ITEMS) {
-            tooMany(); return
         }
         val url = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
             rawUrl
         } else {
             "https://$rawUrl"
         }
-        shortcuts.add(AppPrefs.LinkShortcut(label, url, kind = kind, emoji = emoji))
+        // Preserve the enabled flag when editing; new shortcuts start enabled.
+        val shortcut = AppPrefs.LinkShortcut(label, url, editing?.enabled ?: true, kind, emoji, confirm)
+        if (editIndex >= 0 && editIndex < shortcuts.size) {
+            shortcuts[editIndex] = shortcut
+        } else {
+            if (selectedCount() >= AppPrefs.MAX_ITEMS) {
+                tooMany(); return
+            }
+            shortcuts.add(shortcut)
+        }
         AppPrefs.setShortcuts(this, shortcuts)
         rebuildRows()
     }
@@ -312,6 +353,7 @@ class AppPickerActivity : Activity() {
             val subtitle = view.findViewById<TextView>(R.id.app_subtitle)
             val check = view.findViewById<CheckBox>(R.id.app_check)
             val delete = view.findViewById<ImageView>(R.id.app_delete)
+            val edit = view.findViewById<ImageView>(R.id.app_edit)
             val launch = view.findViewById<ImageView>(R.id.app_launch)
             launch.setOnClickListener { launchRow(row) }
             if (row.type == TYPE_SHORTCUT) {
@@ -321,14 +363,18 @@ class AppPickerActivity : Activity() {
                 subtitle.visibility = View.VISIBLE
                 check.visibility = View.VISIBLE
                 check.isChecked = row.shortcut.enabled
+                edit.visibility = View.VISIBLE
+                edit.setOnClickListener { showShortcutDialog(row.shortcut, row.shortcutIndex) }
                 delete.visibility = View.VISIBLE
-                delete.setOnClickListener { removeShortcut(row.shortcut) }
+                delete.setOnClickListener { removeShortcutAt(row.shortcutIndex) }
             } else {
                 icon.setImageDrawable(row.app!!.icon)
                 label.text = row.app.label
                 subtitle.visibility = View.GONE
                 check.visibility = View.VISIBLE
                 check.isChecked = selectedApps.contains(row.app.component)
+                edit.visibility = View.GONE
+                edit.setOnClickListener(null)
                 delete.visibility = View.GONE
                 delete.setOnClickListener(null)
             }

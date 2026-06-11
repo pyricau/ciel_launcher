@@ -1,5 +1,6 @@
 package com.skylight.chathead
 
+import android.app.AlertDialog
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -19,6 +20,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.text.TextUtils
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -474,14 +476,31 @@ class OverlayService : Service() {
                     }
                 }
             }
+            val finalAction = if (shortcut.confirm) {
+                { confirmThenRun(shortcut.label, action) }
+            } else {
+                action
+            }
             MenuItem(
                 icon = icon,
                 label = shortcut.label,
                 isAction = false,
                 circleColor = Color.WHITE,
-                action = action
+                action = finalAction
             )
         }
+    }
+
+    /** Shows a "Run …?" confirmation as an overlay dialog, then runs [action]. */
+    private fun confirmThenRun(label: String, action: () -> Unit) {
+        val themed = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+        val dialog = AlertDialog.Builder(themed)
+            .setMessage("Run \"$label\", are you sure?")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Run") { _, _ -> action() }
+            .create()
+        dialog.window?.setType(overlayType)
+        dialog.show()
     }
 
     /**
